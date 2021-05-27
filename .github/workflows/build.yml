@@ -27,3 +27,9 @@ jobs:
         sudo apt-get install --no-install-recommends -y device-tree-compiler gcc-aarch64-linux-gnu
     - name: build
       run: make -k -j2 ARCH=aarch64-linux-gnu-
+    - uses: actions/upload-artifact@v2
+      with:
+        name: m1n1
+        path: |
+          build/m1n1.macho
+          build/dtb/t8103-j274.dtb
