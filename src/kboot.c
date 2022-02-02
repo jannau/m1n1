@@ -39,6 +39,181 @@ static char *chosen_params[MAX_CHOSEN_PARAMS][2];
         goto err;                                                                                  \
     } while (0)
 
+static int dt_set_reserved_mem(const char *path, const char *name, u64 addr, u64 size)
+{
+    char fbname[128];
+    u64 fbreg[2] = {cpu_to_fdt64(addr), cpu_to_fdt64(size)};
+    snprintf(fbname, sizeof(fbname), "%s/%s", path, name);
+
+    int node = fdt_path_offset(dt, fbname);
+    if (node < 0)
+        bail("FDT: %s path not found in device tree\n", fbname);
+
+    snprintf(fbname, sizeof(fbname), "%s@%lx", name, addr);
+
+    if (fdt_setprop(dt, node, "reg", fbreg, sizeof(fbreg)))
+        bail("FDT: couldn't set node.reg property\n");
+
+    if (fdt_set_name(dt, node, fbname))
+        bail("FDT: couldn't set node name\n");
+
+    fdt_delprop(dt, node, "status"); // may fail if it does not exist
+
+    return 0;
+}
+
+s64 dart_get_mapping(dart_dev_t *dart, const char *path, u64 paddr, size_t size)
+{
+    s64 iova = dart_search(dart, (void *)paddr);
+    if (iova < 0) {
+        printf("ADT: %s paddr: 0x%lx is not mapped\n", path, paddr);
+        return -1;
+    }
+
+    u64 pend = (u64)dart_translate(dart, iova + size - 1);
+    if (pend != (paddr + size - 1)) {
+        printf("ADT: %s is not continuously mapped: 0x%lx\n", path, pend);
+        return -1;
+    }
+
+    return iova;
+}
+
+static int dt_dart_reserve_vram(void)
+{
+    int ret = 0;
+    u64 paddr, size;
+    int adt_path[4];
+    int node = adt_path_offset_trace(adt, "/vram", adt_path);
+
+    if (node < 0)
+        bail("ADT: '/vram' not found\n");
+
+    int pp = 0;
+    while (adt_path[pp])
+        pp++;
+    adt_path[pp + 1] = 0;
+
+    ret = adt_get_reg(adt, adt_path, "reg", 0, &paddr, &size);
+    if (ret < 0)
+        bail("ADT: failed to read /vram/reg\n");
+
+    ret = dt_set_reserved_mem("/reserved-memory", "vram", paddr, size);
+    if (ret < 0)
+        bail("ADT: failed to fill /reserved-memory/vram\n");
+
+    static const char * darts[] = {
+        "disp0",
+        "dcp",
+        NULL,
+    };
+
+    for (int i = 0; darts[i]; i++) {
+        char ioname[16];
+        char dartpath[32];
+        snprintf(dartpath, sizeof(dartpath), "/arm-io/dart-%s", darts[i]);
+
+        dart_dev_t *dart = dart_init_adt(dartpath, 0, 0, true);
+        if (!dart) {
+            printf("ADT: dart %s not found\n", dartpath);
+            continue;
+        }
+
+        s64 iova = dart_get_mapping(dart, "/vram/reg", paddr, size);
+        if (iova < 0) {
+            printf("ADT: no mapping found for /vram\n");
+            goto cleanup;
+        }
+
+        printf("ADT: '%s: /vram' iova: 0x%lx paddr: 0x%lx size: 0x%lx\n", darts[i], (u64)iova, paddr, size);
+
+        snprintf(ioname, sizeof(ioname), "vram_%s", darts[i]);
+        ret = dt_set_reserved_mem("/reserved-memory", ioname, (u64)iova, size);
+        if (ret < 0)
+            goto cleanup;
+
+cleanup:
+        dart_shutdown(dart);
+    }
+
+    return 0;
+}
+
+struct disp_mapping {
+    char region_adt[24];
+    char mem_phys[24];
+    char mem_iova[24];
+};
+
+static struct disp_mapping disp0_0_reserved_regions[] = {
+    { "region-id-94", "region94",   "region94_disp0_0" },
+    { "region-id-157", "region157", "region157_disp0_0" },
+};
+
+static struct disp_mapping disp0_4_reserved_regions[] = {
+    { "region-id-95", "region95",   "region95_disp0_4" },
+};
+
+static struct disp_mapping dcp_reserved_regions[] = {
+    { "region-id-50", "dcprodata",  "dcprodataio"},
+    { "region-id-57", "dcpheap",    "dcpheapio"},
+    // The 2 following regions are mapped in dart-dcp sid 0 and dart-disp0 sid 0 and 4
+    // unclear if they are needed.
+    { "region-id-94", "region94",   "region94_dcp" },
+    { "region-id-95", "region95",   "region95_dcp" },
+    { "region-id-157", "region157", "region157_dcp" },
+};
+
+#define ARRAY_SIZE(s) (sizeof(s) / sizeof((s)[0]))
+
+static int dt_dart_carveout_reserved_regions(const char * dart_path, int stream_id,
+                                             struct disp_mapping * maps, u32 num_maps)
+{
+    int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
+    if (node < 0)
+        bail("ADT: '/chosen/carveout-memory-map' not found\n");
+
+    dart_dev_t *dart = dart_init_adt(dart_path, 0, stream_id, true);
+    if (!dart)
+        bail("ADT: dart for %s not found\n", dart_path);
+
+    for (unsigned i = 0; i < num_maps; i++) {
+
+        int ret;
+        u64 phys_map[2];
+        struct disp_mapping *map = &maps[i];
+        const char *name = map->region_adt;
+
+        ret = ADT_GETPROP_ARRAY(adt, node, name, phys_map);
+        if (ret != sizeof(phys_map)) {
+            printf("ADT: could not get carveout memory %s\n", name);
+            continue;
+        }
+
+        u64 paddr = phys_map[0];
+        u64 size = phys_map[1];
+
+        s64 iova = dart_get_mapping(dart, name, paddr, size);
+        if (iova < 0) {
+            printf("ADT: no mapping found for %s\n", name);
+            continue;
+        }
+
+        printf("ADT: %s iova: 0x%lx paddr: 0x%lx size: 0x%lx\n", name, (u64)iova, paddr, size);
+
+        ret = dt_set_reserved_mem("/reserved-memory", map->mem_phys, paddr, size);
+        if (ret < 0)
+            continue;
+
+        ret = dt_set_reserved_mem("/reserved-memory", map->mem_iova, (u64)iova, size);
+        if (ret < 0)
+            continue;
+    }
+
+    dart_shutdown(dart);
+    return 0;
+}
+
 void get_notchless_fb(u64 *fb_base, u64 *fb_height)
 {
     *fb_base = cur_boot_args.video.base;
@@ -231,8 +406,21 @@ static int dt_set_chosen(void)
 
         printf("FDT: %s base 0x%lx size 0x%lx\n", fbname, fb_base, fb_size);
 
-        // We do not need to reserve the framebuffer, as it will be excluded from the usable RAM
-        // range already.
+        // Add "/vram" (should hold the framebuffer) as reserved memory.
+        // Required to avoid display processor lockups on DCP probe.
+
+        // check if the FDT has "/reserved-memory" node and fail silently if notch
+
+        int rnode = fdt_path_offset(dt, "/reserved-memory");
+        if (rnode >= 0) {
+            dt_dart_reserve_vram();
+            dt_dart_carveout_reserved_regions("/arm-io/dart-dcp", 0, dcp_reserved_regions,
+                                            ARRAY_SIZE(dcp_reserved_regions));
+            dt_dart_carveout_reserved_regions("/arm-io/dart-disp0", 0, disp0_0_reserved_regions,
+                                            ARRAY_SIZE(disp0_0_reserved_regions));
+            dt_dart_carveout_reserved_regions("/arm-io/dart-disp0", 4, disp0_4_reserved_regions,
+                                            ARRAY_SIZE(disp0_4_reserved_regions));
+        }
     }
 
     int ipd = adt_path_offset(adt, "/arm-io/spi3/ipd");
