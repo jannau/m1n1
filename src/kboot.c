@@ -43,6 +43,265 @@ static char *chosen_params[MAX_CHOSEN_PARAMS][2];
         goto err;                                                                                  \
     } while (0)
 
+static dart_dev_t *dt_init_dart_by_node(int node)
+{
+    int len;
+    const void *prop = fdt_getprop(dt, node, "iommus", &len);
+    if (!prop || len != 8) {
+        printf("FDT: unexpected 'iommus' prop / len %d\n", len);
+        return NULL;
+    }
+
+    const fdt32_t *iommus = prop;
+    u32 iommu_phandle = fdt32_ld(&iommus[0]);
+    u32 iommu_stream = fdt32_ld(&iommus[1]);
+
+    printf("FDT: iommu phande:%u stream:%u\n", iommu_phandle, iommu_stream);
+
+    return dart_init_fdt(dt, iommu_phandle, iommu_stream, true);
+}
+
+u64 dart_get_mapping(dart_dev_t *dart, const char *path, u64 paddr, size_t size)
+{
+    u64 iova = dart_search(dart, (void *)paddr);
+    if (DART_IS_ERR(iova)) {
+        printf("ADT: %s paddr: 0x%lx is not mapped\n", path, paddr);
+        return iova;
+    }
+
+    u64 pend = (u64)dart_translate(dart, iova + size - 1);
+    if (pend != (paddr + size - 1)) {
+        printf("ADT: %s is not continuously mapped: 0x%lx\n", path, pend);
+        return DART_PTR_ERR;
+    }
+
+    return iova;
+}
+
+int dt_device_set_reserved_mem(int node, dart_dev_t *dart, const char *name, uint32_t phandle,
+                               u64 paddr, u64 size)
+{
+    int ret;
+
+    u64 iova = dart_get_mapping(dart, name, paddr, size);
+    if (DART_IS_ERR(iova))
+        bail("ADT: no mapping found for '%s' 0x%012lx iova:0x%08lx)\n", name, paddr, iova);
+
+    ret = fdt_appendprop_u32(dt, node, "iommu-addresses", phandle);
+    if (ret != 0)
+        bail("DT: could not append phandle '%s.compatible' property: %d\n", name, ret);
+
+    ret = fdt_appendprop_u64(dt, node, "iommu-addresses", iova);
+    if (ret != 0)
+        bail("DT: could not append iova to '%s.iommu-addresses' property: %d\n", name, ret);
+
+    ret = fdt_appendprop_u64(dt, node, "iommu-addresses", size);
+    if (ret != 0)
+        bail("DT: could not append size to '%s.iommu-addresses' property: %d\n", name, ret);
+
+    return 0;
+}
+
+#define MAX_MAPPINGS 8
+
+struct disp_mapping {
+    char region_adt[24];
+    char mem_fdt[24];
+    bool map_dcp;
+    bool map_disp0;
+    bool map_piodma;
+};
+
+static struct disp_mapping disp_reserved_regions_t8103[] = {
+    {"region-id-50", "dcp_text", true, false, false},
+    {"region-id-57", "dcp_data", true, false, false},
+    // boot framebuffer, mapped to dart-disp0 sid 0 and dart-dcp sid 0, why?
+    {"region-id-14", "vram", true, true, false},
+    // The 2 following regions are mapped in dart-dcp sid 0 and dart-disp0 sid 0 and 4
+    // unclear if they are needed.
+    {"region-id-94", "region94", true, true, false},
+    {"region-id-95", "region95", true, false, true},
+};
+
+static struct disp_mapping disp_reserved_regions_t600x[] = {
+    {"region-id-50", "dcp_text", true, false, false},
+    {"region-id-57", "dcp_data", true, false, false},
+    // boot framebuffer, mapped to dart-disp0 sid 0 and dart-dcp sid 0, why?
+    {"region-id-14", "vram", true, true, false},
+    // The 2 following regions are mapped in dart-dcp sid 0 and dart-disp0 sid 0 and 4
+    // unclear if they are needed.
+    {"region-id-94", "region94", true, true, false},
+    {"region-id-95", "region95", true, false, true},
+    // used on M1 Pro/Max/Ultra, mapped to dcp and disp0
+    {"region-id-157", "region157", true, true, false},
+};
+
+#define ARRAY_SIZE(s) (sizeof(s) / sizeof((s)[0]))
+
+/* TODO: should operate on a copy of the DT to do an atomic update iff
+ *       everything is filled successfully */
+static int dt_carveout_reserved_regions(struct disp_mapping *maps, u32 num_maps)
+{
+    int ret = 0;
+    dart_dev_t *dart_dcp = NULL, *dart_disp0 = NULL, *dart_piodma = NULL;
+
+    struct {
+        u64 paddr;
+        u64 size;
+    } region[MAX_MAPPINGS];
+
+    int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
+    if (node < 0)
+        bail("ADT: '/chosen/carveout-memory-map' not found\n");
+
+    /* read physical addresses of reserved memory regions */
+    /* do this up front to avoid errors after modifying the DT */
+    for (unsigned i = 0; i < num_maps; i++) {
+
+        int ret;
+        u64 phys_map[2];
+        struct disp_mapping *map = &maps[i];
+        const char *name = map->region_adt;
+
+        ret = ADT_GETPROP_ARRAY(adt, node, name, phys_map);
+        if (ret != sizeof(phys_map))
+            bail("ADT: could not get carveout memory '%s'\n", name);
+        if (!phys_map[0] || !phys_map[1])
+            bail("ADT: carveout memory '%s'\n", name);
+
+        region[i].paddr = phys_map[0];
+        region[i].size = phys_map[1];
+    }
+
+    /* check for display device aliases */
+    int dcp_node = fdt_path_offset(dt, "dcp");
+    if (dcp_node < 0) {
+        printf("DT: could not resolve 'dcp' alias\n");
+        return 0;
+    }
+
+    int disp0_node = fdt_path_offset(dt, "disp0");
+    if (disp0_node < 0) {
+        printf("DT: could not resolve 'disp0' alias\n");
+        return 0;
+    }
+
+    int piodma_node = fdt_path_offset(dt, "disp0_piodma");
+    if (piodma_node < 0) {
+        printf("DT: could not resolve 'disp0_piodma' alias\n");
+        return 0;
+    }
+
+    /* init all DARTs to read the IOVAs of reserved memory regions */
+    dart_dcp = dt_init_dart_by_node(dcp_node);
+    if (!dart_dcp)
+        bail_cleanup("DT: failed to init DART for 'dcp'\n");
+    uint32_t dcp_phandle = fdt_get_phandle(dt, dcp_node);
+
+    dart_disp0 = dt_init_dart_by_node(disp0_node);
+    if (!dart_disp0)
+        bail_cleanup("DT: failed to init DART for 'disp0'\n");
+    uint32_t disp0_phandle = fdt_get_phandle(dt, disp0_node);
+
+    dart_piodma = dt_init_dart_by_node(piodma_node);
+    if (!dart_piodma)
+        bail_cleanup("DT: failed to init DART for 'disp0_piodma'\n");
+    uint32_t piodma_phandle = fdt_get_phandle(dt, piodma_node);
+
+    uint32_t max_phandle;
+    ret = fdt_find_max_phandle(dt, &max_phandle);
+    if (ret)
+        bail_cleanup("DT: failed to get max phandle: %d\n", ret);
+
+    for (unsigned i = 0; i < num_maps; i++) {
+        const char *name = maps[i].mem_fdt;
+        char node_name[64];
+
+        int resv_node = fdt_path_offset(dt, "/reserved-memory");
+        if (resv_node < 0)
+            bail_cleanup("DT: '/reserved-memory' not found\n");
+
+        snprintf(node_name, sizeof(node_name), "%s@%lx", name, region[i].paddr);
+        int mem_node = fdt_add_subnode(dt, resv_node, node_name);
+        if (mem_node < 0)
+            bail_cleanup("DT: failed to add '%s' /reserved-memory subnode: %d\n", node_name, ret);
+
+        uint32_t mem_phandle = ++max_phandle;
+        ret = fdt_setprop_u32(dt, mem_node, "phandle", mem_phandle);
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.phandle' property: %d\n", node_name, ret);
+
+        u64 reg[2] = {cpu_to_fdt64(region[i].paddr), cpu_to_fdt64(region[i].size)};
+        ret = fdt_setprop(dt, mem_node, "reg", reg, sizeof(reg));
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.reg' property: %d\n", node_name, ret);
+
+        ret = fdt_setprop_string(dt, mem_node, "compatible", "apple,dcp");
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.compatible' property: %d\n", node_name, ret);
+
+        ret = fdt_setprop_empty(dt, mem_node, "no-map");
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.no-map' property: %d\n", node_name, ret);
+
+        if (maps[i].map_dcp) {
+            ret = dt_device_set_reserved_mem(mem_node, dart_dcp, node_name, dcp_phandle,
+                                             region[i].paddr, region[i].size);
+            if (ret != 0)
+                goto err;
+        }
+        if (maps[i].map_disp0) {
+            ret = dt_device_set_reserved_mem(mem_node, dart_disp0, node_name, disp0_phandle,
+                                             region[i].paddr, region[i].size);
+            if (ret != 0)
+                goto err;
+        }
+        if (maps[i].map_piodma) {
+            ret = dt_device_set_reserved_mem(mem_node, dart_piodma, node_name, piodma_phandle,
+                                             region[i].paddr, region[i].size);
+            if (ret != 0)
+                goto err;
+        }
+
+        /* modify device nodes after filling /reserved-memory to avoid
+         * reloading mem_node's offset */
+        if (maps[i].map_dcp) {
+            int dev_node = fdt_path_offset(dt, "dcp");
+            if (dev_node < 0)
+                bail_cleanup("DT: failed to get node for alias 'dcp'\n");
+            ret = fdt_appendprop_u32(dt, dev_node, "memory-region", mem_phandle);
+            if (ret != 0)
+                bail_cleanup("DT: failed to append to 'memory-region' property\n");
+        }
+        if (maps[i].map_disp0) {
+            int dev_node = fdt_path_offset(dt, "disp0");
+            if (dev_node < 0)
+                bail_cleanup("DT: failed to get node for alias 'disp0'\n");
+            ret = fdt_appendprop_u32(dt, dev_node, "memory-region", mem_phandle);
+            if (ret != 0)
+                bail_cleanup("DT: failed to append to 'memory-region' property\n");
+        }
+        if (maps[i].map_piodma) {
+            int dev_node = fdt_path_offset(dt, "disp0_piodma");
+            if (dev_node < 0)
+                bail_cleanup("DT: failed to get node for alias 'disp0_piodma\n");
+            ret = fdt_appendprop_u32(dt, dev_node, "memory-region", mem_phandle);
+            if (ret != 0)
+                bail_cleanup("DT: failed to append to 'memory-region' property\n");
+        }
+    }
+
+err:
+    if (dart_dcp)
+        dart_shutdown(dart_dcp);
+    if (dart_disp0)
+        dart_shutdown(dart_disp0);
+    if (dart_piodma)
+        dart_shutdown(dart_piodma);
+
+    return ret;
+}
+
 void get_notchless_fb(u64 *fb_base, u64 *fb_height)
 {
     *fb_base = cur_boot_args.video.base;
@@ -234,10 +493,33 @@ static int dt_set_chosen(void)
         fdt_delprop(dt, fb, "status"); // may fail if it does not exist
 
         printf("FDT: %s base 0x%lx size 0x%lx\n", fbname, fb_base, fb_size);
-
-        // We do not need to reserve the framebuffer, as it will be excluded from the usable RAM
-        // range already.
     }
+
+    /* Add "/reserved-memory" nodes with iommu mapping and link them to their
+     * devices.
+     * Required all display devices.
+     * Checks for dcp* / disp*_piodma / disp* aliases and fails silently if
+     * they are missing. */
+
+    int ret = 0;
+    if (!fdt_node_check_compatible(dt, 0, "apple,t8103"))
+        ret = dt_carveout_reserved_regions(disp_reserved_regions_t8103,
+                                           ARRAY_SIZE(disp_reserved_regions_t8103));
+    else if (!fdt_node_check_compatible(dt, 0, "apple,t6000") ||
+             !fdt_node_check_compatible(dt, 0, "apple,t6001") ||
+             !fdt_node_check_compatible(dt, 0, "apple,t6002"))
+        ret = dt_carveout_reserved_regions(disp_reserved_regions_t600x,
+                                           ARRAY_SIZE(disp_reserved_regions_t600x));
+    else {
+        printf("DT: unknown compatible, skip reserved-memory setup\n");
+        ret = 0;
+    }
+
+    if (ret)
+        bail("DT: failed to setup 'reserved-memory'\n");
+
+    /* reload "/chosen" offset might have changed*/
+    node = fdt_path_offset(dt, "/chosen");
 
     /* lock dart-disp0 to prevent old software from resetting it */
     dart_lock_adt("/arm-io/dart-disp0", 0);
