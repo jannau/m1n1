@@ -12,7 +12,7 @@ dart_dev_t *dart_init_adt(const char *path, int instance, int device, bool keep_
 int dart_map(dart_dev_t *dart, uintptr_t iova, void *bfr, size_t len);
 void dart_unmap(dart_dev_t *dart, uintptr_t iova, size_t len);
 void *dart_translate(dart_dev_t *dart, uintptr_t iova);
-u64 dart_search(dart_dev_t *dart, void *paddr);
+s64 dart_search(dart_dev_t *dart, void *paddr);
 void dart_shutdown(dart_dev_t *dart);
 
 #endif
