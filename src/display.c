@@ -22,7 +22,7 @@
 
 dcp_dev_t *dcp;
 dcp_iboot_if_t *iboot;
-u64 fb_dva;
+s64 fb_dva;
 
 #define abs(x) ((x) >= 0 ? (x) : -(x))
 
@@ -81,7 +81,7 @@ static int display_start_dcp(void)
 
     // Find the framebuffer DVA
     fb_dva = dart_search(dcp->dart_disp, (void *)cur_boot_args.video.base);
-    if (!fb_dva) {
+    if (fb_dva < 0) {
         printf("display: failed to find display DVA\n");
         dcp_shutdown(dcp);
         return -1;
@@ -205,7 +205,7 @@ int display_configure(const char *config)
 
     dcp_layer_t layer = {
         .planes = {{
-            .addr = fb_dva,
+            .addr = (u64)fb_dva,
             .stride = tbest.width * 4,
             .addr_format = ADDR_PLANAR,
         }},

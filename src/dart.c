@@ -289,7 +289,7 @@ void *dart_translate(dart_dev_t *dart, uintptr_t iova)
     return base + offset;
 }
 
-u64 dart_search(dart_dev_t *dart, void *paddr)
+s64 dart_search(dart_dev_t *dart, void *paddr)
 {
     for (int ttbr = 0; ttbr < 4; ++ttbr) {
         if (!dart->l1[ttbr])
@@ -306,12 +306,12 @@ u64 dart_search(dart_dev_t *dart, void *paddr)
                 u64 *dst =
                     (u64 *)(FIELD_GET(dart->offset_mask, l2[l2_index]) << DART_PTE_OFFSET_SHIFT);
                 if (dst == paddr)
-                    return ((u64)ttbr << 36) | ((u64)l1_index << 25) | (l2_index << 14);
+                    return (s64)(((u64)ttbr << 36) | ((u64)l1_index << 25) | (l2_index << 14));
             }
         }
     }
 
-    return 0;
+    return -1;
 }
 
 void dart_shutdown(dart_dev_t *dart)
