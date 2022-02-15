@@ -204,6 +204,32 @@ static int dt_set_memory(void)
     return 0;
 }
 
+static int dt_fix_cpu_cluters(uint32_t phandle)
+{
+    int cpumap = fdt_path_offset(dt, "/cpus/cpu-map");
+    if (cpumap < 0)
+        bail("FDT: /cpus/cpu-map node not found in devtree\n");
+
+    int cluster;
+    for (cluster = fdt_first_subnode(dt, cpumap); cluster >= 0;) {
+        int node;
+        for (node = fdt_first_subnode(dt, cluster); node >= 0;) {
+            int next = fdt_next_subnode(dt, node);
+            const fdt32_t *core = fdt_getprop(dt, node, "cpu", NULL);
+
+            if (phandle == fdt32_ld(core)) {
+                printf("FDT: removing inactive /cpus/cpu-map/%s/%s\n",
+                       fdt_get_name(dt, cluster, NULL), fdt_get_name(dt, node, NULL));
+                fdt_nop_node(dt, node);
+            }
+            node = next;
+        }
+        cluster = fdt_next_subnode(dt, cluster);
+    }
+
+    return 0;
+}
+
 static int dt_set_cpus(void)
 {
     int cpus = fdt_path_offset(dt, "/cpus");
@@ -227,6 +253,11 @@ static int dt_set_cpus(void)
 
         if (!smp_is_alive(cpu)) {
             printf("FDT: CPU %d is not alive, disabling...\n", cpu);
+            // find and remove from cpu-map
+            uint32_t phandle = fdt_get_phandle(dt, node);
+            if (phandle != 0)
+                dt_fix_cpu_cluters(phandle);
+
             int next = fdt_next_subnode(dt, node);
             fdt_nop_node(dt, node);
             cpu++;
