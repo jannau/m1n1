@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: MIT */
 
 #include "display.h"
+#include "adt.h"
 #include "assert.h"
 #include "dcp.h"
 #include "dcp_iboot.h"
 #include "string.h"
 #include "utils.h"
 #include "xnuboot.h"
+
+#define DISPLAY_FB_DVA_START    0x01400000
 
 #define DISPLAY_STATUS_DELAY   100
 #define DISPLAY_STATUS_RETRIES 20
@@ -53,6 +56,47 @@ static void display_choose_color_mode(dcp_color_mode_t *modes, int cnt, dcp_colo
            best->colorimetry, best->eotf, best->encoding, best->bpp);
 }
 
+static uintptr_t display_map_fb(dcp_dev_t *dcp)
+{
+    int ret = 0;
+    u64 paddr, size;
+    int adt_path[4];
+    int node = adt_path_offset_trace(adt, "/vram", adt_path);
+
+    if (node < 0) {
+        printf("display: '/vram' not found\n");
+        return 0;
+    }
+
+    int pp = 0;
+    while (adt_path[pp])
+        pp++;
+    adt_path[pp + 1] = 0;
+
+    ret = adt_get_reg(adt, adt_path, "reg", 0, &paddr, &size);
+    if (ret < 0) {
+        printf("display: failed to read /vram/reg\n");
+        return 0;
+    }
+
+    // TODO: do not hardcode the DVA
+    uintptr_t iova = DISPLAY_FB_DVA_START;
+
+    ret = dart_map(dcp->dart_disp, iova, (void *)paddr, size);
+    if (ret < 0) {
+            printf("display: failed to map fb to dart-disp0\n");
+            return 0;
+    }
+
+    dart_map(dcp->dart_dcp, iova, (void *)paddr, size);
+    if (ret < 0) {
+            printf("display: failed to map fb to dart-disp0\n");
+            return 0;
+    }
+
+    return iova;
+}
+
 static int display_configure(void)
 {
     int ret = -1;
@@ -67,7 +111,11 @@ static int display_configure(void)
     u64 fb_dva = dart_search(dcp->dart_disp, (void *)cur_boot_args.video.base);
     if (!fb_dva) {
         printf("display: failed to find display DVA\n");
-        goto err_shutdown;
+        fb_dva = display_map_fb(dcp);
+        if (!fb_dva) {
+            printf("display: failed to map display DVA\n");
+            goto err_shutdown;
+        }
     }
 
     dcp_iboot_if_t *iboot = dcp_ib_init(dcp);
