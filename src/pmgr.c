@@ -24,6 +24,11 @@
 
 #define PMGR_FLAG_VIRTUAL 0x10
 
+#define PMGR_DEVICE_ID    GENMASK(15, 0)
+#define PMGR_DIE_ID       GENMASK(31, 28)
+
+#define PMGR_DIE_OFFSET   0x2000000000
+
 struct pmgr_device {
     u32 flags;
     u16 parent[2];
@@ -93,17 +98,19 @@ static int pmgr_find_device(u16 id, const struct pmgr_device **device)
     return -1;
 }
 
-static uintptr_t pmgr_device_get_addr(const struct pmgr_device *device)
+static uintptr_t pmgr_device_get_addr(const struct pmgr_device *device, u8 die)
 {
     uintptr_t addr = pmgr_get_psreg(device->psreg_idx);
     if (addr == 0)
         return 0;
 
+    addr += PMGR_DIE_OFFSET * die;
+
     addr += (device->addr_offset << 3);
     return addr;
 }
 
-static int pmgr_set_mode_recursive(u16 id, u8 target_mode, bool recurse)
+static int pmgr_set_mode_recursive(u16 id, u8 die, u8 target_mode, bool recurse)
 {
     if (!pmgr_initialized) {
         printf("pmgr: pmgr_set_mode_recursive() called before successful pmgr_init()\n");
@@ -119,7 +126,7 @@ static int pmgr_set_mode_recursive(u16 id, u8 target_mode, bool recurse)
         return -1;
 
     if (!(device->flags & PMGR_FLAG_VIRTUAL)) {
-        uintptr_t addr = pmgr_device_get_addr(device);
+        uintptr_t addr = pmgr_device_get_addr(device, die);
         if (!addr)
             return -1;
         if (pmgr_set_mode(addr, target_mode))
@@ -130,7 +137,8 @@ static int pmgr_set_mode_recursive(u16 id, u8 target_mode, bool recurse)
 
     for (int i = 0; i < 2; i++) {
         if (device->parent[i]) {
-            int ret = pmgr_set_mode_recursive(device->parent[i], target_mode, true);
+            u16 parrent = FIELD_GET(PMGR_DEVICE_ID, device->parent[i]);
+            int ret = pmgr_set_mode_recursive(parrent, die, target_mode, true);
             if (ret < 0)
                 return ret;
         }
@@ -139,14 +147,18 @@ static int pmgr_set_mode_recursive(u16 id, u8 target_mode, bool recurse)
     return 0;
 }
 
-int pmgr_power_enable(u16 id)
+int pmgr_power_enable(u32 id)
 {
-    return pmgr_set_mode_recursive(id, PMGR_PS_ACTIVE, true);
+    u16 device = FIELD_GET(PMGR_DEVICE_ID, id);
+    u8 die = FIELD_GET(PMGR_DIE_ID, id);
+    return pmgr_set_mode_recursive(device, die, PMGR_PS_ACTIVE, true);
 }
 
-int pmgr_power_disable(u16 id)
+int pmgr_power_disable(u32 id)
 {
-    return pmgr_set_mode_recursive(id, PMGR_PS_PWRGATE, false);
+    u16 device = FIELD_GET(PMGR_DEVICE_ID, id);
+    u8 die = FIELD_GET(PMGR_DIE_ID, id);
+    return pmgr_set_mode_recursive(device, die, PMGR_PS_PWRGATE, false);
 }
 
 static int pmgr_adt_find_devices(const char *path, const u32 **devices, u32 *n_devices)
@@ -178,7 +190,9 @@ static int pmgr_adt_devices_set_mode(const char *path, u8 target_mode, int recur
         return -1;
 
     for (u32 i = 0; i < n_devices; ++i) {
-        if (pmgr_set_mode_recursive(devices[i], target_mode, recurse))
+        u16 device = FIELD_GET(PMGR_DEVICE_ID, devices[i]);
+        u8 die = FIELD_GET(PMGR_DIE_ID, devices[i]);
+        if (pmgr_set_mode_recursive(device, die, target_mode, recurse))
             ret = -1;
     }
 
@@ -212,7 +226,8 @@ int pmgr_reset(const char *name)
         return -1;
     }
 
-    uintptr_t addr = pmgr_device_get_addr(dev);
+    // TODO: change interface for multi die support
+    uintptr_t addr = pmgr_device_get_addr(dev, 0);
 
     u32 reg = read32(addr);
     if (FIELD_GET(PMGR_PS_ACTUAL, reg) != PMGR_PS_ACTIVE) {
@@ -260,7 +275,8 @@ int pmgr_init(void)
         if ((device->flags & PMGR_FLAG_VIRTUAL))
             continue;
 
-        uintptr_t addr = pmgr_device_get_addr(device);
+        // TODO: multi die support
+        uintptr_t addr = pmgr_device_get_addr(device, 0);
         if (!addr)
             continue;
 
@@ -279,7 +295,8 @@ int pmgr_init(void)
                     if ((pdevice->flags & PMGR_FLAG_VIRTUAL))
                         continue;
 
-                    addr = pmgr_device_get_addr(pdevice);
+                    // TODO: multi die support
+                    addr = pmgr_device_get_addr(pdevice, 0);
                     if (!addr)
                         continue;
 
