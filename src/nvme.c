@@ -401,7 +401,8 @@ out_disable_ctrl:
     nvme_poll_syslog();
 out_shutdown:
     rtkit_sleep(nvme_rtkit);
-    pmgr_reset("ANS2");
+    // TODO: find a nicer way to determine the die
+    pmgr_reset("ANS2", nvme_base / PMGR_DIE_OFFSET);
 out_rtkit:
     rtkit_free(nvme_rtkit);
 out_sart:
@@ -443,7 +444,8 @@ void nvme_shutdown(void)
 
     rtkit_sleep(nvme_rtkit);
     asc_cpu_stop(nvme_asc);
-    pmgr_reset("ANS2");
+    // TODO: find a nicer way to determine the die
+    pmgr_reset("ANS2", nvme_base / PMGR_DIE_OFFSET);
     rtkit_free(nvme_rtkit);
     sart_free(nvme_sart);
     asc_free(nvme_asc);
