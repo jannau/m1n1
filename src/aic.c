@@ -43,7 +43,7 @@ static void aic2_init(int node)
         for (u32 i = 0; i < ext_intr_config_len; i += 3) {
             u16 irq = ext_intr_config[i] | (ext_intr_config[i + 1] << 8);
             u8 target = ext_intr_config[i + 2];
-            assert(irq < 0x1000); // Will probably need updating for multi-die
+            assert(irq < 0x2000); // Will probably need updating for more than 2 dies
             mask32(aic_base + aic_regs->config + 4 * irq, AIC2_IRQ_CFG_TARGET,
                    FIELD_PREP(AIC2_IRQ_CFG_TARGET, target));
         }
