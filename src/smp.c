@@ -10,6 +10,13 @@
 
 #define CPU_START_OFF 0x54000
 
+// TODO: define this in a single place. is it available in the ADT?
+#define CPU_DIE_OFF   0x2000000000
+
+#define CPU_REG_CORE    GENMASK(7, 0)
+#define CPU_REG_CLUSTER GENMASK(10, 8)
+#define CPU_REG_DIE     GENMASK(14, 11)
+
 struct spin_table {
     u64 mpidr;
     u64 flag;
@@ -69,7 +76,7 @@ void smp_secondary_entry(void)
     }
 }
 
-static void smp_start_cpu(int index, int cluster, int core, u64 rvbar, u64 cpu_start_base)
+static void smp_start_cpu(int index, int die, int cluster, int core, u64 rvbar, u64 cpu_start_base)
 {
     int i;
 
@@ -90,6 +97,8 @@ static void smp_start_cpu(int index, int cluster, int core, u64 rvbar, u64 cpu_s
     sysop("dmb sy");
 
     write64(rvbar, (u64)_vectors_start);
+
+    cpu_start_base += die * CPU_DIE_OFF;
 
     // Some kind of system level startup/status bit
     // Without this, IRQs don't work
@@ -166,7 +175,11 @@ void smp_start_secondaries(void)
         if (ADT_GETPROP_ARRAY(adt, node, "cpu-impl-reg", cpu_impl_reg) < 0)
             continue;
 
-        smp_start_cpu(i, reg >> 8, reg & 0xff, cpu_impl_reg[0], pmgr_reg + CPU_START_OFF);
+        u8 core = FIELD_GET(CPU_REG_CORE, reg);
+        u8 cluster = FIELD_GET(CPU_REG_CLUSTER, reg);
+        u8 die = FIELD_GET(CPU_REG_DIE, reg);
+
+        smp_start_cpu(i, die, cluster, core, cpu_impl_reg[0], pmgr_reg + CPU_START_OFF);
     }
 
     spin_table[0].mpidr = mrs(MPIDR_EL1) & 0xFFFFFF;
