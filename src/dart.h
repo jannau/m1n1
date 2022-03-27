@@ -13,6 +13,7 @@ int dart_map(dart_dev_t *dart, uintptr_t iova, void *bfr, size_t len);
 void dart_unmap(dart_dev_t *dart, uintptr_t iova, size_t len);
 void *dart_translate(dart_dev_t *dart, uintptr_t iova);
 s64 dart_search(dart_dev_t *dart, void *paddr);
+size_t dart_continuous_size(dart_dev_t *dart, uintptr_t iova, void *paddr);
 void dart_shutdown(dart_dev_t *dart);
 
 #endif

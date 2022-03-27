@@ -314,6 +314,19 @@ s64 dart_search(dart_dev_t *dart, void *paddr)
     return -1;
 }
 
+size_t dart_continuous_size(dart_dev_t *dart, uintptr_t iova, void *paddr)
+{
+    size_t size = 0;
+
+    while (paddr == dart_translate(dart, iova)) {
+        size += SZ_16K;
+        iova += SZ_16K;
+        paddr += SZ_16K;
+    }
+
+    return size;
+}
+
 void dart_shutdown(dart_dev_t *dart)
 {
     if (!dart->locked && !dart->keep)
