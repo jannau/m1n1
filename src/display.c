@@ -24,6 +24,7 @@
 dcp_dev_t *dcp;
 dcp_iboot_if_t *iboot;
 s64 fb_dva;
+size_t fb_dva_size;
 
 #define abs(x) ((x) >= 0 ? (x) : -(x))
 
@@ -123,6 +124,8 @@ static uintptr_t display_map_vram(void)
     if (ret < 0)
         return 0;
 
+    fb_dva_size = size;
+
     return iova;
 }
 
@@ -147,6 +150,10 @@ static int display_start_dcp(void)
         dcp_shutdown(dcp);
         return -1;
     }
+
+    if (fb_dva_size == 0)
+        fb_dva_size =
+            dart_continuous_size(dcp->dart_disp, fb_dva, (void *)cur_boot_args.video.base);
 
     iboot = dcp_ib_init(dcp);
     if (!iboot) {
@@ -296,6 +303,39 @@ int display_configure(const char *config)
         return -1;
     }
 
+    size_t fb_size = ALIGN_UP(tbest.width * tbest.height * ((cbest.bpp + 7) / 8), SZ_16K);
+
+    void *fb_pa = (void *)cur_boot_args.video.base;
+    s64 old_fb_dva = 0;
+    s64 old_fb_dva_size = 0;
+
+    if (fb_dva_size < fb_size) {
+        printf("display: current framebuffer is too small for new mode\n");
+        old_fb_dva = fb_dva;
+        old_fb_dva_size = fb_dva_size;
+        fb_dva = 2 * SZ_32M; // use the start of the 2nd L2 table as fb DVA
+
+        /* rtkit uses 0x10000000 as DVA offset */
+        if ((s64)fb_size > 6 * SZ_32M) {
+            printf("display: not enough reserved L2 DVA space for fb size 0x%zx\n", fb_size);
+            return -1;
+        }
+        fb_dva_size = fb_size;
+
+        cur_boot_args.mem_size -= fb_size;
+        fb_pa = (void *)cur_boot_args.phys_base + cur_boot_args.mem_size;
+        /* add guard page between RAM and framebuffer */
+        // TODO: update mapping?
+        cur_boot_args.mem_size -= SZ_16K;
+
+        memset(fb_pa, 0, fb_dva_size);
+        ret = display_map_fb(fb_dva, fb_pa, fb_dva_size);
+        if (ret < 0) {
+            printf("display: failed to map new fb\n");
+            return -1;
+        }
+    }
+
     // Swap!
     u32 stride = tbest.width * 4;
     ret = display_swap(fb_dva, stride, tbest.width, tbest.height);
@@ -304,8 +344,10 @@ int display_configure(const char *config)
 
     printf("display: swapped! (swap_id=%d)\n", ret);
 
-    if (cur_boot_args.video.stride != stride || cur_boot_args.video.width != tbest.width ||
-        cur_boot_args.video.height != tbest.height || cur_boot_args.video.depth != 30) {
+    if (fb_pa != (void *)cur_boot_args.video.base || cur_boot_args.video.stride != stride ||
+        cur_boot_args.video.width != tbest.width || cur_boot_args.video.height != tbest.height ||
+        cur_boot_args.video.depth != 30) {
+        cur_boot_args.video.base = (u64)fb_pa;
         cur_boot_args.video.stride = stride;
         cur_boot_args.video.width = tbest.width;
         cur_boot_args.video.height = tbest.height;
@@ -315,6 +357,24 @@ int display_configure(const char *config)
 
     /* Update for python / subsequent stages */
     memcpy((void *)boot_args_addr, &cur_boot_args, sizeof(cur_boot_args));
+
+    if (old_fb_dva) {
+        /* update "/vram" with the physical address of the new framebuffer */
+        int node = adt_path_offset(adt, "vram");
+        if (node >= 0) {
+            u64 vram_reg[2] = {(u64)fb_pa, fb_dva_size};
+            // TODO: adt_set_reg(adt, node, "vram", fb_pa, fb_dva_size);?
+            ret = adt_setprop(adt, node, "reg", &vram_reg, sizeof(vram_reg));
+            if (ret < 0)
+                printf("display: failed to update '/vram'\n");
+        }
+
+        /* wait for swap durations + 1ms */
+        u32 delay = (((1000 << 16) + tbest.fps - 1) / tbest.fps) + 1;
+        mdelay(delay);
+        dart_unmap(dcp->dart_disp, old_fb_dva, old_fb_dva_size);
+        dart_unmap(dcp->dart_dcp, old_fb_dva, old_fb_dva_size);
+    }
 
     return 1;
 }
