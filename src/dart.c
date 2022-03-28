@@ -157,6 +157,51 @@ dart_dev_t *dart_init_adt(const char *path, int instance, int device, bool keep_
         dart->offset_mask = DART_PTE_OFFSET_T6000;
     }
 
+    /* lazy, only device 0 of dart-dcp and dart-disp0 are of interest */
+    if (device != 0)
+        return dart;
+
+    const struct adt_property *pt_region = adt_get_property(adt, node, "pt-region-0");
+    if (pt_region && pt_region->size == 16) {
+        u64 region[2];
+        memcpy(region, pt_region->value, sizeof(region));
+        u64 tbl_count = (region[1] - region[0]) / SZ_16K;
+        if (tbl_count > 64) {
+            printf("dart: dart %s ignoring large pt-region-0, %lu L2 tables\n", path, tbl_count);
+            return dart;
+        }
+        /* first index is the l1 table */
+        tbl_count -= 1;
+        u64 l2_start = region[0] + SZ_16K;
+        for (u64 index = 0; index < tbl_count; index++) {
+            int ttbr = index >> 11;
+            int idx = index & 0x7ff;
+            u64 l2tbl = l2_start + index * SZ_16K;
+
+            if (dart->l1[ttbr][idx] & DART_PTE_VALID) {
+                u64 off = FIELD_GET(dart->offset_mask, dart->l1[ttbr][idx])
+                          << DART_PTE_OFFSET_SHIFT;
+                if (off != l2tbl)
+                    printf("dart: unexpected L2 tbl at index:%lu. 0x%016lx != 0x%016lx\n", index,
+                           off, l2tbl);
+                continue;
+            } else {
+                memset((void *)l2tbl, 0, SZ_16K);
+            }
+
+            u64 offset = FIELD_PREP(dart->offset_mask, l2tbl >> DART_PTE_OFFSET_SHIFT);
+            dart->l1[ttbr][idx] = offset | DART_PTE_VALID;
+        }
+
+        u64 l2_tt_0[2] = {region[0], tbl_count};
+        int ret = adt_setprop(adt, node, "l2-tt-0", &l2_tt_0, sizeof(l2_tt_0));
+        if (ret < 0) {
+            printf("dart: failed to update '%s/l2-tt-0'\n", path);
+        }
+
+        dart_tlb_invalidate(dart);
+    }
+
     return dart;
 }
 
