@@ -62,6 +62,8 @@ int dcp_shutdown(dcp_dev_t *dcp)
     rtkit_hibernate(dcp->rtkit);
     rtkit_free(dcp->rtkit);
     dart_shutdown(dcp->dart_disp);
+    iovad_shutdown(dcp->iovad_dcp);
+    dart_free_l2(dcp->dart_dcp, 0x10000000);
     dart_shutdown(dcp->dart_dcp);
     free(dcp);
 
