@@ -39,27 +39,26 @@ static char *chosen_params[MAX_CHOSEN_PARAMS][2];
         goto err;                                                                                  \
     } while (0)
 
-static int dt_set_reserved_mem(const char *path, const char *name, u64 addr, u64 size)
+static dart_dev_t *dt_find_dart_by_dev_phandle(u32 phandle)
 {
-    char fbname[128];
-    u64 fbreg[2] = {cpu_to_fdt64(addr), cpu_to_fdt64(size)};
-    snprintf(fbname, sizeof(fbname), "%s/%s", path, name);
+    int node = fdt_node_offset_by_phandle(dt, phandle);
+    if (node < 0) {
+        printf("FDT: node for phandle %u not found\n", phandle);
+        return NULL;
+    }
 
-    int node = fdt_path_offset(dt, fbname);
-    if (node < 0)
-        bail("FDT: %s path not found in device tree\n", fbname);
+    int len;
+    const void *prop = fdt_getprop(dt, node, "iommus", &len);
+    if (!prop || len != 8) {
+        printf("FDT: unexpected 'iommus' prop / len %d\n", len);
+        return NULL;
+    }
 
-    snprintf(fbname, sizeof(fbname), "%s@%lx", name, addr);
+    const fdt32_t *iommus = prop;
+    u32 iommu_phandle = fdt32_ld(&iommus[0]);
+    u8 iommu_stream = fdt32_ld(&iommus[1]);
 
-    if (fdt_setprop(dt, node, "reg", fbreg, sizeof(fbreg)))
-        bail("FDT: couldn't set node.reg property\n");
-
-    if (fdt_set_name(dt, node, fbname))
-        bail("FDT: couldn't set node name\n");
-
-    fdt_delprop(dt, node, "status"); // may fail if it does not exist
-
-    return 0;
+    return dart_init_fdt(dt, iommu_phandle, iommu_stream, true);
 }
 
 s64 dart_get_mapping(dart_dev_t *dart, const char *path, u64 paddr, size_t size)
@@ -77,6 +76,70 @@ s64 dart_get_mapping(dart_dev_t *dart, const char *path, u64 paddr, size_t size)
     }
 
     return iova;
+}
+
+typedef struct iommu_map {
+    u32 phandle;
+    u64 iova;
+    u64 size;
+} PACKED iommu_map_t;
+
+#define MAX_MAPPINGS 2
+
+static int dt_set_reserved_mem(const char *path, const char *name, u64 paddr, u64 size)
+{
+    char fbname[128];
+    u64 fbreg[2] = {cpu_to_fdt64(paddr), cpu_to_fdt64(size)};
+    snprintf(fbname, sizeof(fbname), "%s/%s", path, name);
+
+    int node = fdt_path_offset(dt, fbname);
+    if (node < 0)
+        bail("FDT: %s path not found in device tree\n", fbname);
+
+    snprintf(fbname, sizeof(fbname), "%s@%lx", name, paddr);
+
+    if (fdt_setprop(dt, node, "reg", fbreg, sizeof(fbreg)))
+        bail("FDT: couldn't set node.reg property\n");
+
+    if (fdt_set_name(dt, node, fbname))
+        bail("FDT: couldn't set node name\n");
+
+    iommu_map_t map[MAX_MAPPINGS];
+    int len;
+    const void *prop = fdt_getprop(dt, node, "iommu-mapping", &len);
+    if (!prop || len < 0)
+        bail("FDT: failed to get 'iommu-mapping' property for '%s/%s'\n", path, name);
+
+    u32 num_mappings = len / sizeof(iommu_map_t);
+    if ((u32)len != num_mappings * sizeof(iommu_map_t) || num_mappings > MAX_MAPPINGS)
+        bail("FDT: unexpected length of %d for prepared propterty 'iommu-mapping'\n", len);
+
+    const iommu_map_t *iomap = prop;
+    for (u32 idx = 0; idx < num_mappings; ++idx) {
+        u32 phandle = fdt32_ld(&iomap[idx].phandle);
+
+        dart_dev_t *dart = dt_find_dart_by_dev_phandle(phandle);
+        if (!dart)
+            bail("FDT: node for phandle %u not found in 'iommu-mapping'\n", phandle);
+
+        s64 iova = dart_get_mapping(dart, name, paddr, size);
+        dart_shutdown(dart);
+        if (iova < 0) {
+            bail("ADT: no mapping found for 0x%012lx\n", paddr);
+        }
+
+        map[idx].phandle = cpu_to_fdt32(phandle);
+        map[idx].iova = cpu_to_fdt64(iova);
+        map[idx].size = cpu_to_fdt64(size);
+    }
+
+    int ret = fdt_setprop_inplace(dt, node, "iommu-mapping", map, num_mappings * sizeof(*map));
+    if (ret < 0)
+        bail("FDT: failed to replace 'iommu-mapping' for '%s/%s'\n", path, name);
+
+    fdt_delprop(dt, node, "status"); // may fail if it does not exist
+
+    return 0;
 }
 
 static int dt_dart_reserve_vram(void)
@@ -102,81 +165,32 @@ static int dt_dart_reserve_vram(void)
     if (ret < 0)
         bail("ADT: failed to fill /reserved-memory/vram\n");
 
-    static const char *darts[] = {
-        "disp0",
-        "dcp",
-        NULL,
-    };
-
-    for (int i = 0; darts[i]; i++) {
-        char ioname[16];
-        char dartpath[32];
-        snprintf(dartpath, sizeof(dartpath), "/arm-io/dart-%s", darts[i]);
-
-        dart_dev_t *dart = dart_init_adt(dartpath, 0, 0, true);
-        if (!dart) {
-            printf("ADT: dart %s not found\n", dartpath);
-            continue;
-        }
-
-        s64 iova = dart_get_mapping(dart, "/vram/reg", paddr, size);
-        if (iova < 0) {
-            printf("ADT: no mapping found for /vram\n");
-            goto cleanup;
-        }
-
-        printf("ADT: '%s: /vram' iova: 0x%lx paddr: 0x%lx size: 0x%lx\n", darts[i], (u64)iova,
-               paddr, size);
-
-        snprintf(ioname, sizeof(ioname), "vram_%s", darts[i]);
-        ret = dt_set_reserved_mem("/reserved-memory", ioname, (u64)iova, size);
-        if (ret < 0)
-            goto cleanup;
-
-    cleanup:
-        dart_shutdown(dart);
-    }
-
     return 0;
 }
 
 struct disp_mapping {
     char region_adt[24];
-    char mem_phys[24];
-    char mem_iova[24];
+    char mem_fdt[24];
 };
 
-static struct disp_mapping disp0_0_reserved_regions[] = {
-    {"region-id-94", "region94", "region94_disp0_0"},
-    {"region-id-157", "region157", "region157_disp0_0"},
-};
-
-static struct disp_mapping disp0_4_reserved_regions[] = {
-    {"region-id-95", "region95", "region95_disp0_4"},
-};
-
-static struct disp_mapping dcp_reserved_regions[] = {
-    {"region-id-50", "dcprodata", "dcprodataio"},
-    {"region-id-57", "dcpheap", "dcpheapio"},
+static struct disp_mapping disp_reserved_regions[] = {
+    {"region-id-50", "dcprodata"},
+    {"region-id-57", "dcpheap"},
     // The 2 following regions are mapped in dart-dcp sid 0 and dart-disp0 sid 0 and 4
     // unclear if they are needed.
-    {"region-id-94", "region94", "region94_dcp"},
-    {"region-id-95", "region95", "region95_dcp"},
-    {"region-id-157", "region157", "region157_dcp"},
+    {"region-id-94", "region94"},
+    {"region-id-95", "region95"},
+    // used on M1 Pro/Max/Ultra, mapped to dcp and disp0
+    {"region-id-157", "region157"},
 };
 
 #define ARRAY_SIZE(s) (sizeof(s) / sizeof((s)[0]))
 
-static int dt_dart_carveout_reserved_regions(const char *dart_path, int stream_id,
-                                             struct disp_mapping *maps, u32 num_maps)
+static int dt_carveout_reserved_regions(struct disp_mapping *maps, u32 num_maps)
 {
     int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
     if (node < 0)
         bail("ADT: '/chosen/carveout-memory-map' not found\n");
-
-    dart_dev_t *dart = dart_init_adt(dart_path, 0, stream_id, true);
-    if (!dart)
-        bail("ADT: dart for %s not found\n", dart_path);
 
     for (unsigned i = 0; i < num_maps; i++) {
 
@@ -194,24 +208,11 @@ static int dt_dart_carveout_reserved_regions(const char *dart_path, int stream_i
         u64 paddr = phys_map[0];
         u64 size = phys_map[1];
 
-        s64 iova = dart_get_mapping(dart, name, paddr, size);
-        if (iova < 0) {
-            printf("ADT: no mapping found for %s\n", name);
-            continue;
-        }
-
-        printf("ADT: %s iova: 0x%lx paddr: 0x%lx size: 0x%lx\n", name, (u64)iova, paddr, size);
-
-        ret = dt_set_reserved_mem("/reserved-memory", map->mem_phys, paddr, size);
+        ret = dt_set_reserved_mem("/reserved-memory", map->mem_fdt, paddr, size);
         if (ret < 0)
-            continue;
-
-        ret = dt_set_reserved_mem("/reserved-memory", map->mem_iova, (u64)iova, size);
-        if (ret < 0)
-            continue;
+            printf("ADT: failed to fill /reserved-memory/%s\n", map->mem_fdt);
     }
 
-    dart_shutdown(dart);
     return 0;
 }
 
@@ -415,12 +416,7 @@ static int dt_set_chosen(void)
         int rnode = fdt_path_offset(dt, "/reserved-memory");
         if (rnode >= 0) {
             dt_dart_reserve_vram();
-            dt_dart_carveout_reserved_regions("/arm-io/dart-dcp", 0, dcp_reserved_regions,
-                                              ARRAY_SIZE(dcp_reserved_regions));
-            dt_dart_carveout_reserved_regions("/arm-io/dart-disp0", 0, disp0_0_reserved_regions,
-                                              ARRAY_SIZE(disp0_0_reserved_regions));
-            dt_dart_carveout_reserved_regions("/arm-io/dart-disp0", 4, disp0_4_reserved_regions,
-                                              ARRAY_SIZE(disp0_4_reserved_regions));
+            dt_carveout_reserved_regions(disp_reserved_regions, ARRAY_SIZE(disp_reserved_regions));
         }
     }
 
