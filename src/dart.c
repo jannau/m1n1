@@ -8,6 +8,8 @@
 #include "string.h"
 #include "utils.h"
 
+#include "libfdt/libfdt.h"
+
 #define DART_CONFIG      0x60
 #define DART_CONFIG_LOCK BIT(15)
 
@@ -155,6 +157,45 @@ dart_dev_t *dart_init_adt(const char *path, int instance, int device, bool keep_
         printf("dart: dart %s at 0x%lx is a t6000%s\n", path, base,
                dart->locked ? " (locked)" : "");
         dart->offset_mask = DART_PTE_OFFSET_T6000;
+    }
+
+    return dart;
+}
+
+dart_dev_t *dart_init_fdt(void *dt, u32 phandle, int device, bool keep_pts)
+{
+    int node = fdt_node_offset_by_phandle(dt, phandle);
+    if (node < 0) {
+        printf("FDT: node for phandle %u not found\n", phandle);
+        return NULL;
+    }
+
+    int len;
+    const void *prop = fdt_getprop(dt, node, "reg", &len);
+    if (!prop || len < 8) {
+        return NULL;
+    }
+    uintptr_t base = fdt64_ld((const fdt64_t *)prop);
+    if (!base)
+        return NULL;
+
+    dart_dev_t *dart = dart_init(base, device, keep_pts);
+
+    if (!dart)
+        return NULL;
+
+    if (!fdt_node_check_compatible(dt, node, "apple,t6000-dart")) {
+        printf("dart: dart phandle:%u at 0x%lx is a t6000%s\n", phandle, base,
+               dart->locked ? " (locked)" : "");
+        dart->offset_mask = DART_PTE_OFFSET_T6000;
+    } else if (!fdt_node_check_compatible(dt, node, "apple,t8103-dart")) {
+        printf("dart: dart phandle:%u at 0x%lx is a t8020%s\n", phandle, base,
+               dart->locked ? " (locked)" : "");
+        dart->offset_mask = DART_PTE_OFFSET_T8020;
+    } else {
+        printf("FDT: unknown DART compatible\n");
+        dart_shutdown(dart);
+        return NULL;
     }
 
     return dart;
