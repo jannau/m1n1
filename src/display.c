@@ -201,6 +201,7 @@ static int display_start_dcp(void)
 
 struct display_options {
     bool retina;
+    bool verify;
 };
 
 int display_parse_mode(const char *config, dcp_timing_mode_t *mode, struct display_options *opts)
@@ -234,6 +235,8 @@ int display_parse_mode(const char *config, dcp_timing_mode_t *mode, struct displ
     while (option && opts) {
         if (!strncmp(option + 1, "retina", 6))
             opts->retina = true;
+        else if (!strncmp(option + 1, "verify", 6))
+            opts->verify = true;
         option = strchr(option + 1, ',');
     }
 
@@ -347,6 +350,41 @@ int display_configure(const char *config)
     if ((ret = dcp_ib_set_mode(iboot, &tbest, &cbest)) < 0) {
         printf("display: failed to set mode\n");
         return -1;
+    }
+
+    if (opts.verify) {
+        bool disconnected = false;
+        for (int i = 0; i < 10; i++) {
+            mdelay(DISPLAY_STATUS_DELAY);
+            hpd = dcp_ib_get_hpd(iboot, NULL, NULL);
+            if (hpd < 0) {
+                printf("display: dcp_ib_get_hpd() failed\n");
+                break;
+            } else if (hpd == 0) {
+                printf("display: hpd disconnected (%d ms)\n", DISPLAY_STATUS_DELAY * (i + 1));
+                disconnected = true;
+                break;
+            }
+        }
+        if (disconnected) {
+            // wait for HPD
+            for (int i = 0; i < 10; i++) {
+                mdelay(DISPLAY_STATUS_DELAY);
+                hpd = dcp_ib_get_hpd(iboot, NULL, NULL);
+                if (hpd < 0) {
+                    printf("display: dcp_ib_get_hpd() failed\n");
+                    break;
+                } else if (hpd == 1) {
+                    // Reset mode
+                    printf("display: hpd connected, set mode again (%d ms)\n", DISPLAY_STATUS_DELAY * (i + 1));
+                    if ((ret = dcp_ib_set_mode(iboot, &tbest, &cbest)) < 0) {
+                        printf("display: failed to set mode\n");
+                        return -1;
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     u64 fb_pa = cur_boot_args.video.base;
