@@ -960,8 +960,14 @@ static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix
     for (u32 die = 0; die < die_count; ++die) {
         char path[16] = "/soc";
 
-        if (die_count > 1)
+        if (die_count > 1) {
+            // pre-linux submission multi-die path
+            // can probably removed the next time someone read this comment.
             snprintf(path, sizeof(path), "/soc/die%u", die);
+            int die = fdt_path_offset(dt, path);
+            if (die < 0)
+                snprintf(path, sizeof(path), "/soc/soc@%u", die);
+        }
 
         int soc = fdt_path_offset(dt, path);
         if (soc < 0)
