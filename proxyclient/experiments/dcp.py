@@ -18,9 +18,8 @@ from m1n1.proxyutils import RegMonitor
 disp_name = "/arm-io/disp0"
 
 external = u.adt[disp_name].external != 0
-compat = u.adt[disp_name].compatible.split(",")[-1]
+compat = u.adt[disp_name].compatible[0].split(",")[-1]
 
-is_t8103 = u.adt["arm-io"].compatible[0] == "arm-io,t8103"
 mon = RegMonitor(u)
 
 if compat == 't8103':
