@@ -239,6 +239,9 @@ static int dt_set_chosen(void)
         // range already.
     }
 
+    /* lock dart-disp0 to prevent old software from resetting it */
+    dart_lock_adt("/arm-io/dart-disp0", 0);
+
     int ipd = adt_path_offset(adt, "/arm-io/spi3/ipd");
     if (ipd < 0)
         ipd = adt_path_offset(adt, "/arm-io/dockchannel-mtp/mtp-transport/keyboard");
