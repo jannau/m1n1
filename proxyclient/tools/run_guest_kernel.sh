@@ -45,6 +45,8 @@ else
 fi
 
 if [ -n "$initramfs" ]; then
+    echo -ne "m1n1_initramfs"  >>"$TMPDIR/m1n1-linux.bin"
+    printf "%.8x" $(stat --printf='%s' "$initramfs") | sed -E 's/(..)(..)(..)(..)/\4\3\2\1/' | xxd -r -p >>"$TMPDIR/m1n1-linux.bin"
     cat "$initramfs" >>"$TMPDIR/m1n1-linux.bin"
 fi
 
