@@ -43,18 +43,19 @@ static char *chosen_params[MAX_CHOSEN_PARAMS][2];
         goto err;                                                                                  \
     } while (0)
 
-static dart_dev_t *dt_init_dart_by_node(int node)
+static dart_dev_t *dt_init_dart_by_node(int node, u32 num)
 {
     int len;
+    assert(num < 32);
     const void *prop = fdt_getprop(dt, node, "iommus", &len);
-    if (!prop || len != 8) {
+    if (!prop || len < 0 || (u32)len < 8 * (num + 1)) {
         printf("FDT: unexpected 'iommus' prop / len %d\n", len);
         return NULL;
     }
 
     const fdt32_t *iommus = prop;
-    u32 iommu_phandle = fdt32_ld(&iommus[0]);
-    u32 iommu_stream = fdt32_ld(&iommus[1]);
+    u32 iommu_phandle = fdt32_ld(&iommus[num * 2]);
+    u32 iommu_stream = fdt32_ld(&iommus[num * 2 + 1]);
 
     printf("FDT: iommu phande:%u stream:%u\n", iommu_phandle, iommu_stream);
 
@@ -193,17 +194,17 @@ static int dt_carveout_reserved_regions(struct disp_mapping *maps, u32 num_maps)
     }
 
     /* init all DARTs to read the IOVAs of reserved memory regions */
-    dart_dcp = dt_init_dart_by_node(dcp_node);
+    dart_dcp = dt_init_dart_by_node(dcp_node, 0);
     if (!dart_dcp)
         bail_cleanup("DT: failed to init DART for 'dcp'\n");
     uint32_t dcp_phandle = fdt_get_phandle(dt, dcp_node);
 
-    dart_disp0 = dt_init_dart_by_node(disp0_node);
+    dart_disp0 = dt_init_dart_by_node(disp0_node, 0);
     if (!dart_disp0)
         bail_cleanup("DT: failed to init DART for 'disp0'\n");
     uint32_t disp0_phandle = fdt_get_phandle(dt, disp0_node);
 
-    dart_piodma = dt_init_dart_by_node(piodma_node);
+    dart_piodma = dt_init_dart_by_node(piodma_node, 0);
     if (!dart_piodma)
         bail_cleanup("DT: failed to init DART for 'disp0_piodma'\n");
     uint32_t piodma_phandle = fdt_get_phandle(dt, piodma_node);
