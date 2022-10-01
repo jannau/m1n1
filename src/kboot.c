@@ -303,6 +303,123 @@ err:
     return ret;
 }
 
+struct dcpext_mapping {
+    char region_adt[24];
+    char mem_fdt[24];
+};
+
+static struct dcpext_mapping dcpext_reserved_regions_t8103[] = {
+    {"region-id-73", "dcpext_text"},
+    {"region-id-74", "dcpext_data"},
+};
+
+/* TODO: should operate on a copy of the DT to do an atomic update iff
+ *       everything is filled successfully */
+static int dt_carveout_reserved_regions_dcpext(struct dcpext_mapping *maps, u32 num_maps,
+                                               const char *dcpext)
+{
+    int ret = 0;
+    dart_dev_t *dart_dcpext = NULL;
+
+    struct {
+        u64 paddr;
+        u64 size;
+    } region[MAX_MAPPINGS];
+
+    int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
+    if (node < 0)
+        bail("ADT: '/chosen/carveout-memory-map' not found\n");
+
+    /* read physical addresses of reserved memory regions */
+    /* do this up front to avoid errors after modifying the DT */
+    for (unsigned i = 0; i < num_maps; i++) {
+
+        int ret;
+        u64 phys_map[2];
+        struct dcpext_mapping *map = &maps[i];
+        const char *name = map->region_adt;
+
+        ret = ADT_GETPROP_ARRAY(adt, node, name, phys_map);
+        if (ret != sizeof(phys_map))
+            bail("ADT: could not get carveout memory '%s'\n", name);
+        if (!phys_map[0] || !phys_map[1])
+            bail("ADT: carveout memory '%s'\n", name);
+
+        region[i].paddr = phys_map[0];
+        region[i].size = phys_map[1];
+    }
+
+    /* check for display device aliases */
+    int dcpext_node = fdt_path_offset(dt, dcpext);
+    if (dcpext_node < 0) {
+        printf("DT: could not resolve '%s' alias\n", dcpext);
+        return 0;
+    }
+
+    /* init all DARTs to read the IOVAs of reserved memory regions */
+    dart_dcpext = dt_init_dart_by_node(dcpext_node, 0);
+    if (!dart_dcpext)
+        bail_cleanup("DT: failed to init DART for '%s'\n", dcpext);
+    uint32_t dcpext_phandle = fdt_get_phandle(dt, dcpext_node);
+
+    uint32_t max_phandle;
+    ret = fdt_find_max_phandle(dt, &max_phandle);
+    if (ret)
+        bail_cleanup("DT: failed to get max phandle: %d\n", ret);
+
+    for (unsigned i = 0; i < num_maps; i++) {
+        const char *name = maps[i].mem_fdt;
+        char node_name[64];
+
+        int resv_node = fdt_path_offset(dt, "/reserved-memory");
+        if (resv_node < 0)
+            bail_cleanup("DT: '/reserved-memory' not found\n");
+
+        snprintf(node_name, sizeof(node_name), "%s@%lx", name, region[i].paddr);
+        int mem_node = fdt_add_subnode(dt, resv_node, node_name);
+        if (mem_node < 0)
+            bail_cleanup("DT: failed to add '%s' /reserved-memory subnode: %d\n", node_name, ret);
+
+        uint32_t mem_phandle = ++max_phandle;
+        ret = fdt_setprop_u32(dt, mem_node, "phandle", mem_phandle);
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.phandle' property: %d\n", node_name, ret);
+
+        u64 reg[2] = {cpu_to_fdt64(region[i].paddr), cpu_to_fdt64(region[i].size)};
+        ret = fdt_setprop(dt, mem_node, "reg", reg, sizeof(reg));
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.reg' property: %d\n", node_name, ret);
+
+        ret = fdt_setprop_string(dt, mem_node, "compatible", "apple,dcp");
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.compatible' property: %d\n", node_name, ret);
+
+        ret = fdt_setprop_empty(dt, mem_node, "no-map");
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.no-map' property: %d\n", node_name, ret);
+
+        ret = dt_device_set_reserved_mem(mem_node, dart_dcpext, node_name, dcpext_phandle,
+                                         region[i].paddr, region[i].size);
+        if (ret != 0)
+            goto err;
+
+        /* modify device nodes after filling /reserved-memory to avoid
+         * reloading mem_node's offset */
+        int dev_node = fdt_path_offset(dt, dcpext);
+        if (dev_node < 0)
+            bail_cleanup("DT: failed to get node for alias '%s'\n", dcpext);
+        ret = fdt_appendprop_u32(dt, dev_node, "memory-region", mem_phandle);
+        if (ret != 0)
+            bail_cleanup("DT: failed to append to 'memory-region' property\n");
+    }
+
+err:
+    if (dart_dcpext)
+        dart_shutdown(dart_dcpext);
+
+    return ret;
+}
+
 void get_notchless_fb(u64 *fb_base, u64 *fb_height)
 {
     *fb_base = cur_boot_args.video.base;
@@ -503,12 +620,14 @@ static int dt_set_chosen(void)
      * they are missing. */
 
     int ret = 0;
-    if (!fdt_node_check_compatible(dt, 0, "apple,t8103"))
+    if (!fdt_node_check_compatible(dt, 0, "apple,t8103")) {
         ret = dt_carveout_reserved_regions(disp_reserved_regions_t8103,
                                            ARRAY_SIZE(disp_reserved_regions_t8103));
-    else if (!fdt_node_check_compatible(dt, 0, "apple,t6000") ||
-             !fdt_node_check_compatible(dt, 0, "apple,t6001") ||
-             !fdt_node_check_compatible(dt, 0, "apple,t6002"))
+        ret |= dt_carveout_reserved_regions_dcpext(
+            dcpext_reserved_regions_t8103, ARRAY_SIZE(dcpext_reserved_regions_t8103), "dcpext");
+    } else if (!fdt_node_check_compatible(dt, 0, "apple,t6000") ||
+               !fdt_node_check_compatible(dt, 0, "apple,t6001") ||
+               !fdt_node_check_compatible(dt, 0, "apple,t6002"))
         ret = dt_carveout_reserved_regions(disp_reserved_regions_t600x,
                                            ARRAY_SIZE(disp_reserved_regions_t600x));
     else {
