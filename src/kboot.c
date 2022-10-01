@@ -420,6 +420,56 @@ err:
     return ret;
 }
 
+struct gpu_reserved {
+    char region_adt[24];
+    char mem_fdt[24];
+};
+
+static struct gpu_reserved gpu_reserved_regions_t8103[] = {
+    {"region-id-56", "uat_handoff"},
+    {"region-id-52", "uat_pagetables"},
+    {"region-id-8", "uat_ttbs"},
+};
+
+/* TODO: should operate on a copy of the DT to do an atomic update iff
+ *       everything is filled successfully */
+static int dt_carveout_reserved_regions_gpu(struct gpu_reserved *maps, u32 num_maps)
+{
+    int ret = 0;
+
+    int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
+    if (node < 0)
+        bail("ADT: '/chosen/carveout-memory-map' not found\n");
+
+    /* read physical addresses of reserved memory regions */
+    /* do this up front to avoid errors after modifying the DT */
+    for (unsigned i = 0; i < num_maps; i++) {
+
+        int ret;
+        u64 phys_map[2];
+        struct gpu_reserved *map = &maps[i];
+        const char *name = map->region_adt;
+
+        ret = ADT_GETPROP_ARRAY(adt, node, name, phys_map);
+        if (ret != sizeof(phys_map))
+            bail("ADT: could not get carveout memory '%s'\n", name);
+        if (!phys_map[0] || !phys_map[1])
+            bail("ADT: carveout memory '%s'\n", name);
+
+        int resv_node = fdt_path_offset(dt, map->mem_fdt);
+        if (resv_node < 0)
+            bail_cleanup("DT: '%s' not found\n", map->mem_fdt);
+
+        u64 reg[2] = {cpu_to_fdt64(phys_map[0]), cpu_to_fdt64(phys_map[1])};
+        ret = fdt_setprop(dt, resv_node, "reg", reg, sizeof(reg));
+        if (ret != 0)
+            bail_cleanup("DT: couldn't set '%s.reg' property: %d\n", map->mem_fdt, ret);
+    }
+
+err:
+    return ret;
+}
+
 void get_notchless_fb(u64 *fb_base, u64 *fb_height)
 {
     *fb_base = cur_boot_args.video.base;
@@ -637,6 +687,12 @@ static int dt_set_chosen(void)
 
     if (ret)
         bail("DT: failed to setup 'reserved-memory'\n");
+
+    /* fill GPU reserved memory */
+    if (!fdt_node_check_compatible(dt, 0, "apple,t8103")) {
+        ret = dt_carveout_reserved_regions_gpu(gpu_reserved_regions_t8103,
+                                               ARRAY_SIZE(gpu_reserved_regions_t8103));
+    }
 
     /* reload "/chosen" offset might have changed*/
     node = fdt_path_offset(dt, "/chosen");
