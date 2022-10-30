@@ -140,6 +140,9 @@ class DCPManager(DCPBaseManager):
     def match_pmu_service(self):
         pass
 
+    def set_number_property(self, key, value):
+        pass
+
     def create_provider_service(self):
         return True
 
@@ -214,6 +217,9 @@ class DCPManager(DCPBaseManager):
 
     def get_calendar_time_ms(self):
         return time.time_ns() // 1000_000
+
+    def update_backlight_factor_prop(self, value):
+        pass
 
     def map_buf(self, buf, vaddr, dva, unk):
         print(f"map buf {buf}, {unk}")
