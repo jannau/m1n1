@@ -170,6 +170,10 @@ swap_rec = Container(
     dst_rect = [[0, 0, width, height],[0,0,0,0],[0,0,0,0],[0,0,0,0]],
     swap_enabled = 0x80000007,
     swap_completed = 0x80000007,
+    bl_tag = 0x00010000,
+    bl_val = 0x10000000,
+    #bl_val = 0x77E6F300,
+    bl_power = 0x40,
 )
 
 surf = Container(
