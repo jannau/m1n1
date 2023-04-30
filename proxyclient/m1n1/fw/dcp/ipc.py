@@ -637,7 +637,7 @@ class UnifiedPipeline2(IPCObject):
     cb_create_iomfb_service = Callback(bool_, "create_iomfb_service")
     cb_create_backlight_service = Callback(bool_, "create_backlight_service")
 
-    cb_create_nvram_service = Callback(bool_, "create_nvram_service") # guessed
+    cb_create_nvram_service = Callback(bool_, "create_nvram_service")
     cb_set_idle_caching_state_ap = Callback(void, "set_idle_caching_state_ap", IdleCachingState, uint)
     cb_start_hardware_boot = Callback(bool_, "start_hardware_boot")
     cb_is_dark_boot = Callback(bool_, "is_dark_boot")
@@ -673,7 +673,9 @@ class UnifiedPipeline2(IPCObject):
         D111 = cb_create_iomfb_service
         D112 = cb_create_backlight_service
         D113 = cb_create_nvram_service
-        D114 = cb_set_idle_caching_state_ap
+        D114 = Callback(bool_, "get_tiling_state", event=uint, para=uint, val=InOutPtr(uint))
+        D115 = Callback(bool_, "set_tiling_state", event=uint, para=uint, val=InPtr(uint))
+        D116 = cb_set_idle_caching_state_ap
         D120 = cb_start_hardware_boot
         D121 = cb_is_dark_boot
         D122 = cb_is_waking_from_hibernate
@@ -821,6 +823,7 @@ class IOMobileFramebufferAP(IPCObject):
         A463 = setDisplayRefreshProperties
         A466 = flush_supportsPower
         A467 = abort_swaps_dcp
+        A468 = Call(uint, "remove_gain_maps", InOutPtr(IOMobileFramebufferUserClient))
         A470 = update_dfb
         A472 = setPowerState
         A473 = isKeepOnScreen
