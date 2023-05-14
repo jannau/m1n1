@@ -491,6 +491,8 @@ int display_init(void)
         printf("DISP0 node not found!\n");
         return -1;
     }
+    printf("display: skipping display init\n");
+    return 0;
 
     display_is_external = adt_getprop(adt, node, "external", NULL);
     if (display_is_external)
