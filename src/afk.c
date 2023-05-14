@@ -77,7 +77,7 @@ struct epic_cmd {
     u64 txbuf;
     u32 rxlen;
     u32 txlen;
-    u16 pad;
+    // u16 pad;
 } PACKED;
 
 #define AFK_MAX_CHANNEL 16
@@ -435,7 +435,7 @@ static int afk_epic_handle_std_service(afk_epic_ep_t *epic, int channel, struct 
         hdr->seq = epic->seq++;
 
         sub->length = payload_size;
-        sub->version = 4;
+        sub->version = 3;
         sub->category = CAT_REPLY;
         sub->type = CODE_STD_SERVICE;
         sub->seq = sub_seq; // service->seq++;
