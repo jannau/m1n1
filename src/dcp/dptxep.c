@@ -35,6 +35,13 @@ struct dptxport_apcall_link_rate {
     u8 _unk1[12];
 } __attribute__((packed));
 
+struct dptxport_apcall_lane_count {
+    u32 retcode;
+    u8 _unk0[12];
+    u64 lane_count;
+    u8 _unk1[8];
+} __attribute__((packed));
+
 struct dptxport_apcall_get_support {
     u32 retcode;
     u8 _unk0[12];
@@ -222,6 +229,20 @@ static int dptxport_call_get_max_link_rate(afk_epic_service_t *service, void *re
     return 0;
 }
 
+static int dptxport_call_get_max_lane_count(struct apple_epic_service *service,
+					   void *reply_, size_t reply_size)
+{
+	struct dptxport_apcall_lane_count *reply = reply_;
+
+	if (reply_size < sizeof(*reply))
+		return -1;
+
+	reply->retcode = 0;
+	reply->lane_count = 4;
+
+	return 0;
+}
+
 static int dptxport_call_get_link_rate(afk_epic_service_t *service, void *reply_, size_t reply_size)
 {
     dptx_port_t *dptx = service->cookie;
@@ -369,6 +390,8 @@ static int dptxport_call(afk_epic_service_t *service, u32 idx, const void *data,
     if (dptx->phy)
         dptx_phy_configure(dptx->phy, idx);
 
+    printf("DPTXPort: apcall %d\n", idx);
+
     switch (idx) {
         case DPTX_APCALL_WILL_CHANGE_LINKG_CONFIG:
             return dptxport_call_will_change_link_config(service);
@@ -380,6 +403,8 @@ static int dptxport_call(afk_epic_service_t *service, u32 idx, const void *data,
             return dptxport_call_get_link_rate(service, reply, reply_size);
         case DPTX_APCALL_SET_LINK_RATE:
             return dptxport_call_set_link_rate(service, data, data_size, reply, reply_size);
+        case DPTX_APCALL_GET_MAX_LANE_COUNT:
+            return dptxport_call_get_max_lane_count(service, reply, reply_size);
         case DPTX_APCALL_GET_SUPPORTS_HPD:
             return dptxport_call_get_supports_hpd(service, reply, reply_size);
         case DPTX_APCALL_GET_SUPPORTS_DOWN_SPREAD:
@@ -474,7 +499,7 @@ int dcp_dptx_connect(dcp_dptx_if_t *dptx, dptx_phy_t *phy, u32 port)
     dptx->phy = phy;
 
     // dptx->port[port].atcphy = phy;
-    // dptxport_validate_connection(dptx->port[port].service, 0, 5, 0);
+    dptxport_validate_connection(dptx->port[port].service, 0, 5, 0);
     dptxport_connect(dptx->port[port].service, 0, 5, 0);
     dptxport_request_display(dptx->port[port].service);
 
