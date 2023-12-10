@@ -88,14 +88,14 @@ static const display_config_t display_config_m2_pro_max = {
 };
 
 static const display_config_t display_config_m2_ultra = {
-    .dcp = "/arm-io/dcpext4",
-    .dcp_dart = "/arm-io/dart-dcpext4",
-    .disp_dart = "/arm-io/dart-dispext4",
+    .dcp = "/arm-io/dcpext5",
+    .dcp_dart = "/arm-io/dart-dcpext5",
+    .disp_dart = "/arm-io/dart-dispext5",
     .dp2hdmi_gpio = "/arm-io/dp2hdmi-gpio1",
     .dptx_phy = "/arm-io/lpdptx-phy1",
-    .pmgr_dev = "DISPEXT4_CPU0",
-    .dcp_alias = "dcpext4",
-    .dcp_index = 1,
+    .pmgr_dev = "DISPEXT1_CPU0",
+    .dcp_alias = "dcpext5",
+    .dcp_index = 2,
     .num_dptxports = 2,
     .die = 1,
 };
