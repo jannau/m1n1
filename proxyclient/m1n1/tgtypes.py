@@ -24,6 +24,7 @@ BootArgs = Struct(
     "devtree"               / Hex(Int64ul),
     "devtree_size"          / Hex(Int32ul),
     "cmdline"               / PaddedString(608, "ascii"),
+    Padding(416),
     Padding(4),
     "boot_flags"            / Hex(Int64ul),
     "mem_size_actual"       / Hex(Int64ul),
