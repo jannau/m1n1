@@ -72,6 +72,16 @@ void init_t6031_everest(int rev);
 bool cpufeat_actlr_el2, cpufeat_fast_ipi, cpufeat_mmu_sprr;
 bool cpufeat_global_sleep, cpufeat_workaround_cyclone_cache;
 
+static void init_h15_acntrdir(uint64_t val)
+{
+    msr(s3_1_c15_c1_5, 0x1); // ACNTRDIR_EL21 (sic)
+    if (in_el2()) {
+        // msr(s3_4_c15_c14_5, val); // ACNTRDIR_EL2
+        msr(s3_4_c15_c14_6, val); // ACNTRDIR_EL12
+    }
+    sysop("isb");
+}
+
 const char *init_cpu(void)
 {
     const char *cpu = "Unknown";
@@ -96,6 +106,18 @@ const char *init_cpu(void)
             reg_mask(SYS_IMP_APL_HID13, HID13_RESET_CYCLES_MASK, HID13_RESET_CYCLES(12));
             reg_set(SYS_IMP_APL_HID14, HID14_ENABLE_NEX_POWER_GATING);
         }
+    }
+
+    // configure counter redirect for M3* based on the SoC
+    switch (chip_id) {
+        case T8122:
+        case T6030:
+        case T6031:
+        case T6034:
+            init_h15_acntrdir(0x3ULL);
+            break;
+        default:
+            break;
     }
 
     switch (part) {
