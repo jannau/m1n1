@@ -39,8 +39,10 @@
 #define MIDR_PART_T6020_AVALANCHE   0x35
 #define MIDR_PART_T6021_BLIZZARD    0x38
 #define MIDR_PART_T6021_AVALANCHE   0x39
-#define MIDR_PART_T6031_EVEREST     0x49
+#define MIDR_PART_T8122_SAWTOOTH    0x42
+#define MIDR_PART_T8122_EVEREST     0x43
 #define MIDR_PART_T6031_SAWTOOTH    0x48
+#define MIDR_PART_T6031_EVEREST     0x49
 
 #define MIDR_REV_LOW  GENMASK(3, 0)
 #define MIDR_PART     GENMASK(15, 4)
@@ -68,6 +70,8 @@ void init_t6021_blizzard(void);
 void init_t6021_avalanche(int rev);
 void init_t6031_sawtooth(void);
 void init_t6031_everest(int rev);
+void init_t8122_sawtooth(void);
+void init_t8122_everest(int rev);
 
 bool cpufeat_actlr_el2, cpufeat_fast_ipi, cpufeat_mmu_sprr;
 bool cpufeat_global_sleep, cpufeat_workaround_cyclone_cache;
@@ -204,6 +208,16 @@ const char *init_cpu(void)
         case MIDR_PART_T8112_BLIZZARD:
             cpu = "M2 Blizzard";
             init_t8112_blizzard();
+            break;
+
+        case MIDR_PART_T8122_EVEREST:
+            cpu = "M3 Everest";
+            init_t8122_everest(rev);
+            break;
+
+        case MIDR_PART_T8122_SAWTOOTH:
+            cpu = "M3 Sawtooth";
+            init_t8122_sawtooth();
             break;
 
         case MIDR_PART_T6020_AVALANCHE:
