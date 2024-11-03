@@ -136,12 +136,29 @@ struct entry dapf_entries[] = {
     {"/arm-io/dart-isp", 5}, {"/arm-io/dart-isp0", 5}, {NULL, -1},
 };
 
+struct entry dapf_entries_t8122[] = {
+    {"/arm-io/dart-aop", 1}, {"/arm-io/dart-mtp", 1},
+    // FIXME: dart-pmp has just reg entry and it's dapf config doesn't match
+    // `struct dapf_t8110_config`
+    // {"/arm-io/dart-pmp", 0},
+    {"/arm-io/dart-isp", 5}, {NULL, -1},
+};
+
 int dapf_init_all(void)
 {
     int ret = 0;
     int count = 0;
+    struct entry *entry;
 
-    struct entry *entry = dapf_entries;
+    switch (chip_id) {
+    case T8122:
+        entry = dapf_entries_t8122;
+        break;
+    default:
+        entry = dapf_entries;
+        break;
+    }
+
     while (entry->path != NULL) {
         if (adt_path_offset(adt, entry->path) < 0) {
             entry++;
