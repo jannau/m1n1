@@ -654,6 +654,10 @@ static struct {
         .fdt_property = "local-mac-address",
     },
     {
+        .alias = "ethernet1",
+        .fdt_property = "local-mac-address",
+    },
+    {
         .alias = "wifi0",
         .fdt_property = "local-mac-address",
     },
