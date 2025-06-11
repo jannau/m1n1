@@ -398,6 +398,9 @@ static int dt_set_region(void *dt, int sgx, const char *name, const char *path)
     if (fdt_setprop_inplace(dt, node, "reg", reg, sizeof(reg)))
         bail("FDT: GPU: failed to set reg prop for %s\n", path);
 
+    if (fdt_setprop_string(dt, node, "status", "okay") < 0)
+        printf("FDT: GPU: failed to enable '%s' region\n", name);
+
     return 0;
 }
 
@@ -673,6 +676,9 @@ int dt_set_gpu(void *dt)
 
     if (firmware_set_fdt(dt, gpu, "apple,firmware-compat", compat))
         return -1;
+
+    if (fdt_setprop_string(dt, gpu, "status", "okay") < 0)
+        printf("FDT: GPU: failed to enable gpu node\n");
 
     return 0;
 }
