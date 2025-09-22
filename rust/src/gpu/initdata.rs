@@ -879,11 +879,13 @@ pub unsafe extern "C" fn rust_fill_gpu_initdata(
         for i in 0..ins.n_perf_states_cs {
             let mut volts = Vec::with_capacity(hwcfg.num_dies as usize);
             for j in 0..hwcfg.num_dies as usize {
+                // convert micro volt to milli volt
                 volts.push(unsafe {
-                    ins.pstates_cs
+                    (ins.pstates_cs
                         .offset((i + j * ins.n_perf_states_cs) as isize)
                         .read()
-                        .volt as u32
+                        .volt as u32)
+                        / 1000
                 })
             }
             perf_states_cs.push(hw::PState {
@@ -895,11 +897,13 @@ pub unsafe extern "C" fn rust_fill_gpu_initdata(
         for i in 0..ins.n_perf_states_afr {
             let mut volts = Vec::with_capacity(hwcfg.num_dies as usize);
             for j in 0..hwcfg.num_dies as usize {
+                // convert micro volt to milli volt
                 volts.push(unsafe {
-                    ins.pstates_afr
+                    (ins.pstates_afr
                         .offset((i + j * ins.n_perf_states_afr) as isize)
                         .read()
-                        .volt as u32
+                        .volt as u32)
+                        / 1000
                 })
             }
             perf_states_afr.push(hw::PState {
