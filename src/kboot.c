@@ -1393,8 +1393,8 @@ static int dt_device_set_reserved_mem_from_dart(int node, dart_dev_t *dart, cons
     return dt_device_set_reserved_mem(node, name, phandle, iova, size);
 }
 
-int dt_get_or_add_reserved_mem(const char *node_name, const char *compat, bool nomap, u64 paddr,
-                               size_t size)
+static int dt_get_or_add_reserved_mem(const char *node_name, const char *compat, bool nomap,
+                                      u64 paddr, size_t size)
 {
     int ret;
     int resv_node = fdt_path_offset(dt, "/reserved-memory");
@@ -1435,7 +1435,7 @@ int dt_get_or_add_reserved_mem(const char *node_name, const char *compat, bool n
     return node;
 }
 
-int dt_device_add_mem_region(const char *alias, uint32_t phandle, const char *name)
+static int dt_device_add_mem_region(const char *alias, uint32_t phandle, const char *name)
 {
     int ret;
     int dev_node = fdt_path_offset(dt, alias);
