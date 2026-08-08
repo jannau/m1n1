@@ -59,13 +59,14 @@ jobs:
       - name: Export git info
         shell: bash
         run: |
-          echo "GIT_DATE=$(git log -1 --format=%cd --date=format:%Y%m%d)" >> $GITHUB_ENV
           echo "KERNEL_REF=$(git --git-dir=linux/.git describe --tags --always)" >> $GITHUB_ENV
           if [ ${{ github.ref_type }} = "tag" ]; then
               echo "M1N1_REF=${{ github.ref_name }}" | tr ';,<>/|"' '[_*]' >> $GITHUB_ENV
+              echo "GIT_DATE=${{ github.ref_name }}" | tr ';,<>/|"' '[_*]' >> $GITHUB_ENV
           else
               SHA=${{ github.sha }}
               echo "M1N1_REF=${{ github.ref_name }}-${SHA:0:10}" | tr ';,<>/|"' '[_*]' >> $GITHUB_ENV
+              echo "GIT_DATE=$(git log -1 --format=%cd --date=format:%Y%m%d)" >> $GITHUB_ENV
           fi
 
       - name: Build
