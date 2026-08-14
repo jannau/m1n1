@@ -2406,6 +2406,17 @@ static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix
                 if (fdt_setprop_string(dt, node, "status", "disabled") < 0)
                     bail_cleanup("FDT: failed to set status property of %s/%s\n", path, name);
             }
+
+            // disable child devices
+            int child;
+            fdt_for_each_subnode(child, dt, node)
+            {
+                if (fdt_setprop_string(dt, child, "status", "disabled") < 0) {
+                    const char *child_name = fdt_get_name(dt, child, NULL);
+                    bail_cleanup("FDT: failed to set status property of %s/%s/%s\n", path, name,
+                                 child_name);
+                }
+            }
         }
 
         /* Disable secondary devices */
@@ -2805,6 +2816,8 @@ int kboot_prepare_dt(void *fdt)
     if (dt_set_ipd())
         return -1;
     if (dt_disable_missing_devs("usb-drd", "usb@", 8, 0))
+        return -1;
+    if (dt_disable_missing_devs("acio", "cio@", 8, 2))
         return -1;
     if (dt_disable_missing_devs("i2c", "i2c@", 8, 0))
         return -1;
