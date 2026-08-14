@@ -2325,6 +2325,9 @@ static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix
         if (strncmp(name, adt_prefix, adt_prefix_len))
             continue;
 
+        if (name[adt_prefix_len] < '0' || name[adt_prefix_len] > '9')
+            continue;
+
         path[pp] = node;
         if (adt_get_reg(adt, path, "reg", 0, &addrs[acnt++], NULL) < 0)
             bail_cleanup("Error getting /arm-io/%s regs\n", name);
