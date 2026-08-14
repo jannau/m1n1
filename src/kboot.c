@@ -2287,7 +2287,8 @@ static int dt_set_isp_fwdata(void)
     return 0;
 }
 
-static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix, int max_devs)
+static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix, int max_devs,
+                                   int regnum)
 {
     int ret = -1;
     int adt_prefix_len = strlen(adt_prefix);
@@ -2329,7 +2330,7 @@ static int dt_disable_missing_devs(const char *adt_prefix, const char *dt_prefix
             continue;
 
         path[pp] = node;
-        if (adt_get_reg(adt, path, "reg", 0, &addrs[acnt++], NULL) < 0)
+        if (adt_get_reg(adt, path, "reg", regnum, &addrs[acnt++], NULL) < 0)
             bail_cleanup("Error getting /arm-io/%s regs\n", name);
     }
 
@@ -2803,9 +2804,9 @@ int kboot_prepare_dt(void *fdt)
         return -1;
     if (dt_set_ipd())
         return -1;
-    if (dt_disable_missing_devs("usb-drd", "usb@", 8))
+    if (dt_disable_missing_devs("usb-drd", "usb@", 8, 0))
         return -1;
-    if (dt_disable_missing_devs("i2c", "i2c@", 8))
+    if (dt_disable_missing_devs("i2c", "i2c@", 8, 0))
         return -1;
     if (dt_setup_sio())
         return -1;
