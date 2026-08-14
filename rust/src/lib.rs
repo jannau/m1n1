@@ -24,6 +24,7 @@ pub mod gpu;
 #[cfg(feature = "chainload")]
 pub mod nvme;
 pub mod print;
+pub mod usb4;
 
 #[cfg(not(test))]
 use crate::dlmalloc::DLMalloc;

@@ -1185,8 +1185,23 @@ static int dt_append_acio_tunable(int adt_node, int fdt_node,
     return 0;
 }
 
-static int dt_copy_usb4_drom(const char *adt_path, const char *dt_alias)
+static u8 crc8(u8 *b, size_t len)
 {
+    u8 value = 0xff;
+
+    for (unsigned i = 0; i < len; i++) {
+        value /*= value*/ ^= b[i];
+        for (unsigned j = 0; j < 8; j++)
+            value = (value << 1) ^ ((value & 0x80) ? 7 : 0);
+    }
+
+    return value;
+}
+
+static int dt_copy_usb4_drom(const char *adt_path, const char *dt_alias, u64 router_uuid)
+{
+    u8 drom[256];
+
     int adt_node = adt_path_offset(adt, adt_path);
     if (adt_node < 0)
         return -1;
@@ -1204,7 +1219,15 @@ static int dt_copy_usb4_drom(const char *adt_path, const char *dt_alias)
     if (!drom_blob || !drom_len)
         bail("ADT: Failed to get thunderbolt-drom\n");
 
-    return fdt_setprop(dt, fdt_node, "apple,thunderbolt-drom", drom_blob, drom_len);
+    if (drom_len > sizeof(drom))
+        bail("ADT: thunderbolt-drom exceed buffer size (%u > %zu)\n", drom_len, sizeof(drom));
+
+    memcpy(drom, drom_blob, drom_len);
+    memcpy(&drom[1], &router_uuid, sizeof(router_uuid));
+
+    drom[0] = crc8(&drom[1], 8);
+
+    return fdt_setprop(dt, fdt_node, "apple,thunderbolt-drom", drom, drom_len);
 }
 
 static int dt_copy_acio_tunables(const char *adt_path, const char *dt_alias,
@@ -1242,6 +1265,10 @@ static int dt_set_acio_tunables(void)
 {
     char adt_path[32];
     char fdt_alias[32];
+    u64 router_uuid = rust_usb4_router_uuid();
+
+    if (!router_uuid)
+        bail("ADT: unable to generate USB4 router UUID\n");
 
     for (int i = 0; i < MAX_CIO_DEVS; ++i) {
         memset(adt_path, 0, sizeof(adt_path));
@@ -1262,7 +1289,7 @@ static int dt_set_acio_tunables(void)
         snprintf(fdt_alias, sizeof(fdt_alias), "usb4_%d_nhi", i);
         dt_copy_acio_tunables(adt_path, fdt_alias, usb4_nhi_tunables,
                               sizeof(usb4_nhi_tunables) / sizeof(*usb4_nhi_tunables));
-        dt_copy_usb4_drom(adt_path, fdt_alias);
+        dt_copy_usb4_drom(adt_path, fdt_alias, router_uuid | i);
     }
 
     return 0;
