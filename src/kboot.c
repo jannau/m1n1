@@ -1966,6 +1966,9 @@ static int dt_set_display(void)
 {
     /* lock dart-disp0 to prevent old software from resetting it */
     dart_lock_adt("/arm-io/dart-disp0", 0);
+    const char compat_piodma_alias[] = "disp0_piodma";
+    const char piodma_alias[] = "disp0-piodma";
+    const char *disp0_piodma_alias = piodma_alias;
 
     /* Add "/reserved-memory" nodes with iommu mapping and link them to their
      * devices. The memory is already excluded from usable RAM so these nodes
@@ -1976,8 +1979,12 @@ static int dt_set_display(void)
 
     int ret = 0;
 
+    /* Use old style disp0_piodma alias with underscore if it exists. */
+    if (!!fdt_get_alias(dt, compat_piodma_alias))
+        disp0_piodma_alias = compat_piodma_alias;
+
     if (!fdt_node_check_compatible(dt, 0, "apple,t8103")) {
-        ret = dt_carveout_reserved_regions("dcp", "disp0", "disp0_piodma",
+        ret = dt_carveout_reserved_regions("dcp", "disp0", disp0_piodma_alias,
                                            disp_reserved_regions_t8103,
                                            ARRAY_SIZE(disp_reserved_regions_t8103));
         if (ret)
@@ -1986,7 +1993,7 @@ static int dt_set_display(void)
         ret = dt_carveout_reserved_regions("dcpext", NULL, NULL, dcpext_reserved_regions_t8103,
                                            ARRAY_SIZE(dcpext_reserved_regions_t8103));
     } else if (!fdt_node_check_compatible(dt, 0, "apple,t8112")) {
-        ret = dt_carveout_reserved_regions("dcp", "disp0", "disp0_piodma",
+        ret = dt_carveout_reserved_regions("dcp", "disp0", disp0_piodma_alias,
                                            disp_reserved_regions_t8112,
                                            ARRAY_SIZE(disp_reserved_regions_t8112));
         if (ret)
@@ -1994,7 +2001,7 @@ static int dt_set_display(void)
     } else if (!fdt_node_check_compatible(dt, 0, "apple,t6000") ||
                !fdt_node_check_compatible(dt, 0, "apple,t6001") ||
                !fdt_node_check_compatible(dt, 0, "apple,t6002")) {
-        ret = dt_carveout_reserved_regions("dcp", "disp0", "disp0_piodma",
+        ret = dt_carveout_reserved_regions("dcp", "disp0", disp0_piodma_alias,
                                            disp_reserved_regions_t600x,
                                            ARRAY_SIZE(disp_reserved_regions_t600x));
         if (ret)
@@ -2012,7 +2019,7 @@ static int dt_set_display(void)
         }
     } else if (!fdt_node_check_compatible(dt, 0, "apple,t6020") ||
                !fdt_node_check_compatible(dt, 0, "apple,t6021")) {
-        ret = dt_carveout_reserved_regions("dcp", "disp0", "disp0_piodma",
+        ret = dt_carveout_reserved_regions("dcp", "disp0", disp0_piodma_alias,
                                            disp_reserved_regions_t602x,
                                            ARRAY_SIZE(disp_reserved_regions_t602x));
         if (ret)
