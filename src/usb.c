@@ -44,6 +44,29 @@ struct usb_drd_regs {
 static tps6598x_irq_state_t tps6598x_irq_state[USB_IODEV_COUNT];
 static bool usb_is_initialized = false;
 
+/* USB2 PHY regs */
+#define USB2PHY_USBCTL           0x00
+#define USB2PHY_USBCTL_USB_MODE  0x7
+#define USB2PHY_USBCTL_RUN       2
+#define USB2PHY_USBCTL_ISOLATION 4
+
+#define USB2PHY_CTL             0x04
+#define USB2PHY_CTL_RESET       BIT(0)
+#define USB2PHY_CTL_PORT_RESET  BIT(1)
+#define USB2PHY_CTL_APB_RESET_N BIT(2)
+#define USB2PHY_CTL_SIDDQ       BIT(3)
+
+#define USB2PHY_SIG                      0x08
+#define USB2PHY_SIG_VBUSDET_FORCE_VAL    BIT(0)
+#define USB2PHY_SIG_VBUSDET_FORCE_EN     BIT(1)
+#define USB2PHY_SIG_VBUSVLDEXT_FORCE_VAL BIT(2)
+#define USB2PHY_SIG_VBUSVLDEXT_FORCE_EN  BIT(3)
+#define USB2PHY_SIG_HOST                 (7 << 12)
+
+#define USB2PHY_MISCTUNE                 0x1c
+#define USB2PHY_MISCTUNE_APBCLK_GATE_OFF BIT(29)
+#define USB2PHY_MISCTUNE_REFCLK_GATE_OFF BIT(30)
+
 #define PIPEHANDLER_MUX_CTRL             0x0c
 #define PIPEHANDLER_MUX_CTRL_USB3        0x08
 #define PIPEHANDLER_MUX_CTRL_USB4_TUNNEL 0x11
@@ -146,11 +169,12 @@ int usb_phy_bringup(u32 idx)
     if (pmgr_adt_power_enable(path) < 0)
         return -1;
 
-    write32(usb_regs.atc + 0x08, 0x01c1000f);
-    write32(usb_regs.atc + 0x04, 0x00000003);
-    write32(usb_regs.atc + 0x04, 0x00000000);
-    write32(usb_regs.atc + 0x1c, 0x008c0813);
-    write32(usb_regs.atc + 0x00, 0x00000002);
+    write32(usb_regs.atc + USB2PHY_SIG, 0x01c1000f);
+    write32(usb_regs.atc + USB2PHY_CTL, USB2PHY_CTL_RESET | USB2PHY_CTL_PORT_RESET);
+    clear32(usb_regs.atc + USB2PHY_CTL, USB2PHY_CTL_RESET);
+    clear32(usb_regs.atc + USB2PHY_CTL, USB2PHY_CTL_PORT_RESET);
+    write32(usb_regs.atc + USB2PHY_MISCTUNE, 0x008c0813);
+    write32(usb_regs.atc + USB2PHY_USBCTL, USB2PHY_USBCTL_RUN);
 
     write32(usb_regs.drd_regs_unk3 + PIPEHANDLER_MUX_CTRL, PIPEHANDLER_MUX_CTRL_DUMMY);
     write32(usb_regs.drd_regs_unk3 + PIPEHANDLER_AON_GEN, PIPEHANDLER_AON_GEN_DWC3_RESET_N);
